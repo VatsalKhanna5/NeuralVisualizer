@@ -229,11 +229,11 @@ This tool is designed for:
 
 ## License
 
-[License](LICENSE)
+This project is licensed under the terms of the [MIT License](LICENSE).
 
 ## Author
 
-[Vatsal Khanna]
+- [Vatsal Khanna](https://github.com/VatsalKhanna)
 
 ## Acknowledgements
 
