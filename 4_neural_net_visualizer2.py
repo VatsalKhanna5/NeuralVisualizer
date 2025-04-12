@@ -2,8 +2,10 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import cm
 import seaborn as sns
 import networkx as nx
+from mpl_toolkits.mplot3d import Axes3D
 
 # --- General Settings ---
 st.set_page_config(page_title="Neural Net Learner", layout="wide")
@@ -309,12 +311,21 @@ with st.sidebar:
     epochs = st.slider("Auto-Train Epochs", 100, 5000, 1000, step=100)
     seed = st.number_input("Random Seed", value=42)
     
+    # 3D Visualization settings
+    st.subheader("Visualization Settings")
+    if use_temperature:
+        vis_mode = st.radio("Decision Surface Visualization", 
+                         ["3D Surface", "2D Slices", "Feature Importance"])
+    else:
+        vis_mode = "2D Surface"
+    
     if st.button("🔄 Initialize Network"):
         st.session_state.nn = EnhancedNeuralNet(input_size, hidden_layers, 1, lr=learning_rate, seed=seed)
         st.session_state.history = []
         st.session_state.epoch = 0
         st.session_state.trained = False
         st.session_state.use_temperature = use_temperature
+        st.session_state.vis_mode = vis_mode
         st.success(f"Network initialized with {len(hidden_layers)} hidden layers!")
 
 # --- Initialization ---
@@ -325,6 +336,7 @@ if "nn" not in st.session_state:
     st.session_state.epoch = 0
     st.session_state.trained = False
     st.session_state.use_temperature = True
+    st.session_state.vis_mode = "3D Surface"
 
 # --- Data ---
 data = generate_data()
@@ -495,11 +507,11 @@ if st.session_state.trained:
         ax3.set_ylim(0, 1)
         st.pyplot(fig3)
 
-    # 4. Decision Surface visualization (only for 2D input)
+    # --- Decision Visualization Section ---
+    st.markdown("### 🌐 Neural Network Decision Visualization")
+    
+    # Case 1: 2D visualization when only 2 inputs are used
     if not st.session_state.use_temperature:
-        st.markdown("### 🌐 Decision Surface")
-        fig4, ax4 = plt.subplots(figsize=(8, 6))
-        
         try:
             # Create a mesh grid for visualization
             sun_range = np.linspace(0, 1, 40)  # Reduced grid size for better performance
@@ -512,75 +524,437 @@ if st.session_state.trained:
             # Make predictions
             Z = st.session_state.nn.predict(X_mesh).reshape(sun_grid.shape)
             
-            # Plot contour
+            # Plot 2D contour
+            fig4, ax4 = plt.subplots(figsize=(8, 6))
             contour = ax4.contourf(sun_grid, water_grid, Z, cmap='viridis', alpha=0.8, levels=15)
             plt.colorbar(contour, ax=ax4)
             
-            # Plot training data points (sample to avoid overplotting)
-            sample_idx = np.random.choice(range(len(X)), min(500, len(X)), replace=False)
-            scatter = ax4.scatter(X[sample_idx, 0], X[sample_idx, 1], c=y[sample_idx].flatten(), 
-                                cmap='coolwarm', edgecolor='k', s=30, alpha=0.7)
+            # Mark current input point
+            ax4.scatter([input_val[0, 0]], [input_val[0, 1]], c='red', marker='*', s=200, 
+                       edgecolor='white', linewidth=1.5, label='Current Input')
             
             ax4.set_xlabel('Normalized Sunlight')
             ax4.set_ylabel('Normalized Water')
-            ax4.set_title('Neural Network Decision Surface')
+            ax4.set_title('Neural Network Decision Surface (2D)')
+            ax4.legend()
             
             st.pyplot(fig4)
         except Exception as e:
-            st.error(f"Could not generate decision surface: {str(e)}")
+            st.error(f"Could not generate 2D decision surface: {str(e)}")
             st.info("This can happen with complex network architectures. Try simplifying the network.")
+    # Case 2: 3D visualization when all 3 inputs are used
     else:
-        st.info("Decision surface visualization is only available when using 2 input features (without temperature).")
+        if st.session_state.vis_mode == "3D Surface":
+            try:
+                # Create grid points for 3D visualization (keeping third dimension constant)
+                resolution = 25  # Lower resolution for better performance
+                sun_range = np.linspace(0, 1, resolution)
+                water_range = np.linspace(0, 1, resolution)
+                sun_grid, water_grid = np.meshgrid(sun_range, water_range)
+                
+                # Use current temperature value for the visualization
+                temp_val = (temperature - 5) / 30
+                
+                # Prepare inputs
+                grid_shape = sun_grid.shape
+                temp_grid = np.ones_like(sun_grid) * temp_val
+                
+                X_mesh = np.column_stack((sun_grid.ravel(), water_grid.ravel(), temp_grid.ravel()))
+                
+                # Make predictions
+                Z = st.session_state.nn.predict(X_mesh).reshape(grid_shape)
+                
+                # Create 3D surface plot
+                fig = plt.figure(figsize=(10, 8))
+                ax = fig.add_subplot(111, projection='3d')
+                
+                # Plot the surface
+                surf = ax.plot_surface(sun_grid, water_grid, Z, cmap='viridis', alpha=0.8, 
+                                     rstride=1, cstride=1, edgecolor='none', antialiased=True)
+                
+                # Mark current prediction point
+                ax.scatter([input_val[0, 0]], [input_val[0, 1]], [pred], c='red', marker='o', s=100, 
+                         edgecolor='white', linewidth=1.5, label='Prediction')
+                
+                # Add color bar
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+                
+                # Customize the plot
+                ax.set_xlabel('Normalized Sunlight')
+                ax.set_ylabel('Normalized Water')
+                ax.set_zlabel('Predicted Growth')
+                ax.set_title(f'3D Decision Surface (Temperature = {temperature}°C)')
+                
+                # Adjust view angle
+                ax.view_init(30, 135)
+                
+                st.pyplot(fig)
+                
+                # Show information about visualization
+                st.info("This 3D visualization shows the relationship between sunlight, water, and predicted growth rate while holding temperature constant at your selected value. The red marker shows your current input's prediction.")
+                
+            except Exception as e:
+                st.error(f"Could not generate 3D surface: {str(e)}")
+                st.info("Try simplifying the network or reducing the resolution.")
         
-        # Show feature importance instead
-        st.markdown("### 🔍 Feature Importance Analysis")
+        elif st.session_state.vis_mode == "2D Slices":
+            try:
+                # Create slices at different temperature values
+                temps = [10, 20, 25, 30]
+                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+                axes = axes.flatten()
+                
+                # Create grid points
+                resolution = 30
+                sun_range = np.linspace(0, 1, resolution)
+                water_range = np.linspace(0, 1, resolution)
+                sun_grid, water_grid = np.meshgrid(sun_range, water_range)
+                
+                for i, temp in enumerate(temps):
+                    temp_val = (temp - 5) / 30  # Normalize
+                    
+                    # Prepare inputs
+                    grid_shape = sun_grid.shape
+                    temp_grid = np.ones_like(sun_grid) * temp_val
+                    
+                    X_mesh = np.column_stack((sun_grid.ravel(), water_grid.ravel(), temp_grid.ravel()))
+                    
+                    # Make predictions
+                    Z = st.session_state.nn.predict(X_mesh).reshape(grid_shape)
+                    
+                    # Plot slice
+                    contour = axes[i].contourf(sun_grid, water_grid, Z, cmap='viridis', levels=15)
+                    
+                    # Mark current point if temperature is close
+                    if abs(temp - temperature) < 5:
+                        axes[i].scatter([input_val[0, 0]], [input_val[0, 1]], c='red', marker='*', s=150,
+                                      label='Current Input')
+                    
+                    axes[i].set_xlabel('Normalized Sunlight')
+                    axes[i].set_ylabel('Normalized Water')
+                    axes[i].set_title(f'Temperature = {temp}°C')
+                
+                # Add colorbar
+                fig.subplots_adjust(right=0.8)
+                cbar_ax = fig.add_axes([0.85, 0.15, 0.02, 0.7])
+                fig.colorbar(contour, cax=cbar_ax, label='Predicted Growth')
+                
+                fig.suptitle('Neural Network Decision Surface at Different Temperatures')
+                plt.tight_layout(rect=[0, 0, 0.85, 0.95])
+                
+                st.pyplot(fig)
+                
+                st.info("These 2D slices show how the relationship between sunlight, water, and growth changes across different temperature values. Notice how the optimal growing conditions shift!")
+                
+            except Exception as e:
+                st.error(f"Could not generate 2D slices: {str(e)}")
+        
+        elif st.session_state.vis_mode == "Feature Importance":
+            try:
+                # Simple sensitivity analysis
+                base_input = np.array([[sun/10, water/5, (temperature-5)/30]])
+                base_pred = st.session_state.nn.predict(base_input)[0][0]
+                
+                # Test sensitivity to each input with finer increments
+                delta = 0.05
+                n_points = 20
+                
+                # Create variable ranges
+                sun_range = np.linspace(max(0, base_input[0, 0]-0.3), min(1, base_input[0, 0]+0.3), n_points)
+                water_range = np.linspace(max(0, base_input[0, 1]-0.3), min(1, base_input[0, 1]+0.3), n_points)
+                temp_range = np.linspace(max(0, base_input[0, 2]-0.3), min(1, base_input[0, 2]+0.3), n_points)
+                
+                # Get predictions varying only one feature at a time
+                sun_preds = []
+                water_preds = []
+                temp_preds = []
+                
+                for s in sun_range:
+                    test_input = base_input.copy()
+                    test_input[0, 0] = s
+                    sun_preds.append(st.session_state.nn.predict(test_input)[0][0])
+                
+                for w in water_range:
+                    test_input = base_input.copy()
+                    test_input[0, 1] = w
+                    water_preds.append(st.session_state.nn.predict(test_input)[0][0])
+                
+                for t in temp_range:
+                    test_input = base_input.copy()
+                    test_input[0, 2] = t
+                    temp_preds.append(st.session_state.nn.predict(test_input)[0][0])
+                
+                # Plot sensitivity curves
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                ax.plot(sun_range*10, sun_preds, 'r-', linewidth=2, label='Sunlight (hours)')
+                ax.plot(water_range*5, water_preds, 'b-', linewidth=2, label='Water (liters)')
+                ax.plot(temp_range*30+5, temp_preds, 'g-', linewidth=2, label='Temperature (°C)')
+                
+                # Add vertical lines at current values
+                ax.axvline(sun, color='r', linestyle='--', alpha=0.5)
+                ax.axvline(water, color='b', linestyle='--', alpha=0.5)
+                ax.axvline(temperature, color='g', linestyle='--', alpha=0.5)
+                
+                # Add horizontal line at current prediction
+                ax.axhline(pred, color='k', linestyle='--', alpha=0.3)
+                
+                ax.set_xlabel('Input Value (in original units)')
+                ax.set_ylabel('Predicted Growth')
+                ax.set_title('Feature Sensitivity Analysis')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                
+                st.pyplot(fig)
+                
+                # Calculate sensitivity scores (using standard deviation of predictions)
+                sun_sensitivity = np.std(sun_preds)
+                water_sensitivity = np.std(water_preds)
+                temp_sensitivity = np.std(temp_preds)
+                
+                # Normalize to sum to 100%
+                total_sensitivity = sun_sensitivity + water_sensitivity + temp_sensitivity
+                sun_importance = sun_sensitivity / total_sensitivity * 100
+                water_importance = water_sensitivity / total_sensitivity * 100
+                temp_importance = temp_sensitivity / total_sensitivity * 100
+                
+                # Create bar chart of relative importances
+                fig5, ax5 = plt.subplots(figsize=(8, 5))
+                features = ['Sunlight', 'Water', 'Temperature']
+                importances = [sun_importance, water_importance, temp_importance]
+                colors = ['#FF9966', '#66B2FF', '#99CC99']
+                
+                bars = ax5.bar(features, importances, color=colors)
+                ax5.set_ylabel('Relative Importance (%)')
+                ax5.set_title('Feature Importance Analysis')
+                
+                # Add value labels on top of each bar
+                for bar in bars:
+                    height = bar.get_height()
+                    ax5.annotate(f'{height:.1f}%',
+                                xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 3),  # 3 points vertical offset
+                                textcoords="offset points",
+                                ha='center', va='bottom')
+                
+                st.pyplot(fig5)
+                
+                st.info("The sensitivity analysis shows how changing each input affects the predicted growth. The steeper the curve, the more sensitive the model is to that feature at your current operating point.")
+                
+            except Exception as e:
+                st.error(f"Could not perform sensitivity analysis: {str(e)}")
+
+    # --- Interactive 3D Explorer (For 3 features only) ---
+    if st.session_state.use_temperature and st.session_state.trained:
+        st.markdown("### 🔍 Interactive 3D Data Explorer")
         
         try:
-            # Simple sensitivity analysis
-            base_input = np.array([[sun/10, water/5, (temperature-5)/30]])
-            base_pred = st.session_state.nn.predict(base_input)[0][0]
+            # Create a 3D scatter plot of training data
+            fig = plt.figure(figsize=(10, 8))
+            ax = fig.add_subplot(111, projection='3d')
             
-            # Test sensitivity to each input
-            delta = 0.1
-            sensitivities = []
+            # Sample points to avoid overcrowding
+            sample_size = min(500, len(X))
+            sample_idx = np.random.choice(range(len(X)), sample_size, replace=False)
             
-            # Sunlight sensitivity
-            test_input = base_input.copy()
-            test_input[0, 0] += delta
-            sens_sun = abs(st.session_state.nn.predict(test_input)[0][0] - base_pred) / delta
+            # Create scatter plot with color based on growth
+            scatter = ax.scatter(X[sample_idx, 0], X[sample_idx, 1], X[sample_idx, 2], 
+                               c=y[sample_idx].flatten(), cmap='viridis', 
+                               s=30, alpha=0.7)
             
-            # Water sensitivity
-            test_input = base_input.copy()
-            test_input[0, 1] += delta
-            sens_water = abs(st.session_state.nn.predict(test_input)[0][0] - base_pred) / delta
+            # Add current prediction point
+            ax.scatter([input_val[0, 0]], [input_val[0, 1]], [input_val[0, 2]], 
+                     color='red', s=200, marker='*', edgecolor='white',
+                     label='Current Input')
             
-            # Temperature sensitivity
-            test_input = base_input.copy()
-            test_input[0, 2] += delta
-            sens_temp = abs(st.session_state.nn.predict(test_input)[0][0] - base_pred) / delta
+            # Add color bar
+            cbar = fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
+            cbar.set_label('Growth Rate')
             
-            # Create bar chart of sensitivities
-            fig5, ax5 = plt.subplots()
-            features = ['Sunlight', 'Water', 'Temperature']
-            sensitivities = [sens_sun, sens_water, sens_temp]
-            colors = ['#FF9966', '#66B2FF', '#99CC99']
+            # Customize the plot
+            ax.set_xlabel('Normalized Sunlight')
+            ax.set_ylabel('Normalized Water')
+            ax.set_zlabel('Normalized Temperature')
+            ax.set_title('Training Data in 3D Feature Space')
+            ax.legend()
             
-            bars = ax5.bar(features, sensitivities, color=colors)
-            ax5.set_ylabel('Sensitivity Score')
-            ax5.set_title('Feature Importance (Sensitivity Analysis)')
+            # Add grid for better depth perception
+            ax.grid(True)
             
-            # Add value labels on top of each bar
-            for bar in bars:
-                height = bar.get_height()
-                ax5.annotate(f'{height:.3f}',
-                            xy=(bar.get_x() + bar.get_width() / 2, height),
-                            xytext=(0, 3),  # 3 points vertical offset
-                            textcoords="offset points",
-                            ha='center', va='bottom')
+            # Set initial viewpoint
+            ax.view_init(30, 120)
             
-            st.pyplot(fig5)
+            st.pyplot(fig)
+            
+            # Add rotation controls
+            st.write("Change the 3D view angle:")
+            col1, col2 = st.columns(2)
+            with col1:
+                elev = st.slider("Elevation", -90, 90, 30)
+            with col2:
+                azim = st.slider("Azimuth", 0, 360, 120)
+            
+            # Show rotated view
+            fig_rot = plt.figure(figsize=(10, 8))
+            ax_rot = fig_rot.add_subplot(111, projection='3d')
+            
+            # Recreate plot with new viewpoint
+            scatter = ax_rot.scatter(X[sample_idx, 0], X[sample_idx, 1], X[sample_idx, 2], 
+                                   c=y[sample_idx].flatten(), cmap='viridis', 
+                                   s=30, alpha=0.7)
+            
+            ax_rot.scatter([input_val[0, 0]], [input_val[0, 1]], [input_val[0, 2]], 
+                         color='red', s=200, marker='*', edgecolor='white',
+                         label='Current Input')
+            
+            cbar = fig_rot.colorbar(scatter, ax=ax_rot, shrink=0.5, aspect=5)
+            cbar.set_label('Growth Rate')
+            
+            ax_rot.set_xlabel('Normalized Sunlight')
+            ax_rot.set_ylabel('Normalized Water')
+            ax_rot.set_zlabel('Normalized Temperature')
+            ax_rot.set_title('Training Data with Custom View Angle')
+            ax_rot.legend()
+            ax_rot.grid(True)
+            
+            # Set custom viewpoint
+            ax_rot.view_init(elev, azim)
+            
+            st.pyplot(fig_rot)
+            
         except Exception as e:
-            st.error(f"Could not perform sensitivity analysis: {str(e)}")
+            st.error(f"Could not generate interactive 3D plot: {str(e)}")
+
+# --- Add Formula Explorer Section ---
+st.markdown("---")
+st.subheader("🧪 Plant Growth Formula Explorer")
+
+# Create a tool to visualize the actual formula
+with st.expander("Explore the True Growth Formula"):
+    st.write("""
+    This section allows you to visualize the true plant growth formula that the neural network is trying to learn.
+    You can see how each parameter affects growth independently and their interactions.
+    """)
+    
+    # Choose which relationship to plot
+    plot_type = st.radio("Select Relationship to Visualize:", 
+                       ["Sunlight Effect", "Water Effect", "Temperature Effect", 
+                        "Sun-Water Interaction", "Sun-Temperature Interaction",
+                        "Water-Temperature Interaction"])
+    
+    # Create basic plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    if plot_type == "Sunlight Effect":
+        # Show sunlight effect while keeping other variables constant
+        sun_range = np.linspace(0, 10, 100)
+        growth_vals = [realistic_plant_growth(s, water, temperature) for s in sun_range]
+        
+        ax.plot(sun_range, growth_vals, linewidth=3, color='orange')
+        ax.axvline(sun, color='r', linestyle='--')
+        ax.set_xlabel("Sunlight (hours)")
+        ax.set_ylabel("Growth Rate")
+        ax.set_title("Effect of Sunlight on Plant Growth")
+        
+    elif plot_type == "Water Effect":
+        # Show water effect
+        water_range = np.linspace(0, 5, 100)
+        growth_vals = [realistic_plant_growth(sun, w, temperature) for w in water_range]
+        
+        ax.plot(water_range, growth_vals, linewidth=3, color='blue')
+        ax.axvline(water, color='b', linestyle='--')
+        ax.set_xlabel("Water (liters)")
+        ax.set_ylabel("Growth Rate")
+        ax.set_title("Effect of Water on Plant Growth")
+        
+    elif plot_type == "Temperature Effect":
+        # Show temperature effect
+        temp_range = np.linspace(5, 35, 100)
+        growth_vals = [realistic_plant_growth(sun, water, t) for t in temp_range]
+        
+        ax.plot(temp_range, growth_vals, linewidth=3, color='green')
+        ax.axvline(temperature, color='g', linestyle='--')
+        ax.set_xlabel("Temperature (°C)")
+        ax.set_ylabel("Growth Rate")
+        ax.set_title("Effect of Temperature on Plant Growth")
+        
+    elif plot_type == "Sun-Water Interaction":
+        # Create 2D heatmap of sun-water interaction
+        sun_range = np.linspace(0, 10, 50)
+        water_range = np.linspace(0, 5, 50)
+        sun_grid, water_grid = np.meshgrid(sun_range, water_range)
+        
+        growth_grid = np.zeros_like(sun_grid)
+        for i in range(len(water_range)):
+            for j in range(len(sun_range)):
+                growth_grid[i, j] = realistic_plant_growth(sun_grid[i, j], water_grid[i, j], temperature)
+        
+        contour = ax.contourf(sun_grid, water_grid, growth_grid, levels=20, cmap='viridis')
+        plt.colorbar(contour, ax=ax)
+        ax.scatter([sun], [water], color='r', marker='*', s=200, edgecolor='white')
+        
+        ax.set_xlabel("Sunlight (hours)")
+        ax.set_ylabel("Water (liters)")
+        ax.set_title(f"Sun-Water Interaction (Temperature = {temperature}°C)")
+        
+    elif plot_type == "Sun-Temperature Interaction":
+        # Create 2D heatmap of sun-temperature interaction
+        sun_range = np.linspace(0, 10, 50)
+        temp_range = np.linspace(5, 35, 50)
+        sun_grid, temp_grid = np.meshgrid(sun_range, temp_range)
+        
+        growth_grid = np.zeros_like(sun_grid)
+        for i in range(len(temp_range)):
+            for j in range(len(sun_range)):
+                growth_grid[i, j] = realistic_plant_growth(sun_grid[i, j], water, temp_grid[i, j])
+        
+        contour = ax.contourf(sun_grid, temp_grid, growth_grid, levels=20, cmap='viridis')
+        plt.colorbar(contour, ax=ax)
+        ax.scatter([sun], [temperature], color='r', marker='*', s=200, edgecolor='white')
+        
+        ax.set_xlabel("Sunlight (hours)")
+        ax.set_ylabel("Temperature (°C)")
+        ax.set_title(f"Sun-Temperature Interaction (Water = {water} liters)")
+        
+    elif plot_type == "Water-Temperature Interaction":
+        # Create 2D heatmap of water-temperature interaction
+        water_range = np.linspace(0, 5, 50)
+        temp_range = np.linspace(5, 35, 50)
+        water_grid, temp_grid = np.meshgrid(water_range, temp_range)
+        
+        growth_grid = np.zeros_like(water_grid)
+        for i in range(len(temp_range)):
+            for j in range(len(water_range)):
+                growth_grid[i, j] = realistic_plant_growth(sun, water_grid[i, j], temp_grid[i, j])
+        
+        contour = ax.contourf(water_grid, temp_grid, growth_grid, levels=20, cmap='viridis')
+        plt.colorbar(contour, ax=ax)
+        ax.scatter([water], [temperature], color='r', marker='*', s=200, edgecolor='white')
+        
+        ax.set_xlabel("Water (liters)")
+        ax.set_ylabel("Temperature (°C)")
+        ax.set_title(f"Water-Temperature Interaction (Sunlight = {sun} hours)")
+    
+    ax.grid(True, alpha=0.3)
+    st.pyplot(fig)
+    
+    # Show formula explanation
+    st.markdown("""
+    #### 📚 About the Plant Growth Formula
+    
+    The realistic plant growth model considers:
+    
+    1. **Sunlight response**: Bell-shaped curve with optimal around 6-7 hours (gets worse if too low or too high)
+    2. **Water response**: Diminishing returns (more water helps, but with decreasing benefit)
+    3. **Temperature effect**: Bell curve with optimal around 23°C
+    4. **Interaction effects**:
+       - Sun-Water: Positive interaction (more sun requires more water)
+       - Temperature-Water: Negative at high temperatures (hot conditions need more water)
+       - Sun-Temperature: Complex interaction (optimal temp changes with sunlight)
+    
+    The neural network tries to learn these relationships and their interactions from the data.
+    """)
 
 st.markdown("---")
 st.markdown("Made with ❤️ for students learning about neural nets. Fine-tune, visualize, and play around to understand how training affects the network.")
+                
