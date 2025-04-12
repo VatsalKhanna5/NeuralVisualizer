@@ -229,11 +229,11 @@ This tool is designed for:
 
 ## License
 
-[Your chosen license here]
+[License](LICENSE)
 
 ## Author
 
-[Your name]
+[Vatsal Khanna]
 
 ## Acknowledgements
 
